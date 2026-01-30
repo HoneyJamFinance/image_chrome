@@ -21,8 +21,14 @@ def generate_filename() -> str:
 
 
 def save_image(image: Image.Image) -> Path:
-    """Save the image to the configured folder and return the path."""
-    folder = get_save_folder()
+    """Save the image to a date-based subfolder and return the path."""
+    base_folder = get_save_folder()
+
+    # Create date-based subfolder (YYYY-MM-DD)
+    today = datetime.now().strftime("%Y-%m-%d")
+    folder = base_folder / today
+    folder.mkdir(parents=True, exist_ok=True)
+
     filename = generate_filename()
     filepath = folder / filename
 
@@ -59,8 +65,8 @@ def create_html_viewer(image_path: Path) -> Path:
             min-height: 100vh;
             display: flex;
             justify-content: center;
-            align-items: center;
-            padding: 20px;
+            align-items: flex-start;
+            padding: 40px 20px 20px 20px;
         }}
         img {{
             max-width: 100%;
@@ -114,8 +120,8 @@ def open_in_chrome(html_path: Path) -> None:
             break
 
     if chrome_exe:
-        # Open in new window
-        subprocess.Popen([chrome_exe, '--new-window', str(html_path)])
+        # Open in new tab (no --new-window flag)
+        subprocess.Popen([chrome_exe, str(html_path)])
     else:
         # Fall back to default browser
         os.startfile(str(html_path))

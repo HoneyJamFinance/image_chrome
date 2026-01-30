@@ -1,13 +1,10 @@
 """Clipboard monitoring and image extraction."""
 
-import io
 import threading
 import time
 from typing import Callable, Optional
 
-import win32clipboard
-import win32con
-from PIL import Image
+from PIL import Image, ImageGrab
 from pynput import keyboard
 
 
@@ -31,99 +28,33 @@ class ClipboardMonitor:
     def _get_clipboard_image(self) -> Optional[Image.Image]:
         """Extract image from clipboard if available."""
         try:
-            win32clipboard.OpenClipboard()
-            try:
-                # Check for DIB format (Device Independent Bitmap)
-                if win32clipboard.IsClipboardFormatAvailable(win32con.CF_DIB):
-                    data = win32clipboard.GetClipboardData(win32con.CF_DIB)
-                    # Parse DIB data
-                    image = self._dib_to_image(data)
-                    if image:
-                        return image
+            # Use PIL's ImageGrab which handles Windows clipboard reliably
+            print("[DEBUG] Checking clipboard with ImageGrab...")
+            image = ImageGrab.grabclipboard()
 
-                # Check for standard bitmap format
-                if win32clipboard.IsClipboardFormatAvailable(win32con.CF_BITMAP):
-                    # CF_BITMAP is harder to work with, DIB is preferred
-                    pass
-
-                # Check for PNG format (some applications use this)
-                png_format = win32clipboard.RegisterClipboardFormat("PNG")
-                if win32clipboard.IsClipboardFormatAvailable(png_format):
-                    data = win32clipboard.GetClipboardData(png_format)
-                    return Image.open(io.BytesIO(data))
-
-            finally:
-                win32clipboard.CloseClipboard()
-        except Exception as e:
-            # Clipboard might be locked by another application
-            try:
-                win32clipboard.CloseClipboard()
-            except:
-                pass
-            print(f"Clipboard access error: {e}")
-
-        return None
-
-    def _dib_to_image(self, dib_data: bytes) -> Optional[Image.Image]:
-        """Convert DIB (Device Independent Bitmap) data to PIL Image."""
-        try:
-            # DIB header structure
-            # BITMAPINFOHEADER is 40 bytes
-            if len(dib_data) < 40:
+            if image is None:
+                print("[DEBUG] No image in clipboard")
                 return None
 
-            # Parse BITMAPINFOHEADER
-            import struct
-            header = dib_data[:40]
-            (
-                header_size, width, height, planes, bit_count,
-                compression, image_size, x_ppm, y_ppm,
-                colors_used, colors_important
-            ) = struct.unpack('<IiiHHIIiiII', header)
-
-            # Handle negative height (top-down bitmap)
-            top_down = height < 0
-            height = abs(height)
-
-            # Calculate color table size
-            if bit_count <= 8:
-                if colors_used == 0:
-                    colors_used = 1 << bit_count
-                color_table_size = colors_used * 4
+            if isinstance(image, Image.Image):
+                print(f"[DEBUG] Got image: {image.size}, mode={image.mode}")
+                # Convert to RGB if needed (removes alpha issues)
+                if image.mode == 'RGBA':
+                    # Keep RGBA for transparency support
+                    return image
+                elif image.mode != 'RGB':
+                    return image.convert('RGB')
+                return image
+            elif isinstance(image, list):
+                # ImageGrab returns list of file paths if files were copied
+                print(f"[DEBUG] Clipboard contains files, not image: {image}")
+                return None
             else:
-                color_table_size = 0
-
-            # Get pixel data
-            pixel_offset = header_size + color_table_size
-            pixel_data = dib_data[pixel_offset:]
-
-            # Create BMP file in memory
-            # BMP file header (14 bytes) + DIB data
-            file_size = 14 + len(dib_data)
-            pixel_offset_in_file = 14 + header_size + color_table_size
-
-            bmp_header = struct.pack(
-                '<2sIHHI',
-                b'BM',
-                file_size,
-                0,
-                0,
-                pixel_offset_in_file
-            )
-
-            bmp_data = bmp_header + dib_data
-
-            # Open with PIL
-            image = Image.open(io.BytesIO(bmp_data))
-
-            # Convert to RGBA for consistency
-            if image.mode != 'RGBA':
-                image = image.convert('RGBA')
-
-            return image
+                print(f"[DEBUG] Unexpected clipboard content type: {type(image)}")
+                return None
 
         except Exception as e:
-            print(f"DIB conversion error: {e}")
+            print(f"[DEBUG] Clipboard access error: {e}")
             return None
 
     def _on_press(self, key):
@@ -131,10 +62,26 @@ class ClipboardMonitor:
         try:
             if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
                 self.ctrl_pressed = True
-            elif hasattr(key, 'char') and key.char == 'v' and self.ctrl_pressed:
-                self._handle_paste()
-        except AttributeError:
-            pass
+                print("[DEBUG] Ctrl pressed")
+            else:
+                # Debug: show what key we got
+                if self.ctrl_pressed:
+                    key_char = getattr(key, 'char', None)
+                    key_vk = getattr(key, 'vk', None)
+                    print(f"[DEBUG] Key while Ctrl held: char={key_char}, vk={key_vk}, key={key}")
+
+                # Check for 'V' key - can be char or vk code
+                is_v = False
+                if hasattr(key, 'char') and key.char and key.char.lower() == 'v':
+                    is_v = True
+                elif hasattr(key, 'vk') and key.vk == 0x56:  # 0x56 is 'V'
+                    is_v = True
+
+                if is_v and self.ctrl_pressed:
+                    print("[DEBUG] Ctrl+V detected!")
+                    self._handle_paste()
+        except AttributeError as e:
+            print(f"[DEBUG] Key error: {e}")
 
     def _on_release(self, key):
         """Handle key release events."""
@@ -146,6 +93,7 @@ class ClipboardMonitor:
         # Debounce to prevent multiple triggers
         current_time = time.time()
         if current_time - self._last_paste_time < self._debounce_interval:
+            print("[DEBUG] Debounced - too soon after last paste")
             return
         self._last_paste_time = current_time
 
@@ -153,9 +101,13 @@ class ClipboardMonitor:
         def check_clipboard():
             # Small delay to let the clipboard settle
             time.sleep(0.1)
+            print("[DEBUG] Checking clipboard for image...")
             image = self._get_clipboard_image()
             if image:
+                print(f"[DEBUG] Image found! Size: {image.size}")
                 self.on_image_callback(image)
+            else:
+                print("[DEBUG] No image in clipboard")
 
         thread = threading.Thread(target=check_clipboard, daemon=True)
         thread.start()
