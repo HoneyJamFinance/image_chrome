@@ -24,12 +24,21 @@ def get_default_save_folder() -> Path:
     return documents
 
 
+def get_default_shortcut() -> dict:
+    """Get the default shortcut configuration."""
+    return {
+        'modifiers': ['ctrl'],  # ctrl, alt, shift
+        'key': 'v'
+    }
+
+
 def load_config() -> dict:
     """Load configuration from file."""
     config_path = get_config_path()
     default_config = {
         'save_folder': str(get_default_save_folder()),
-        'auto_start_enabled': False
+        'auto_start_enabled': False,
+        'shortcut': get_default_shortcut()
     }
 
     if config_path.exists():
@@ -80,3 +89,28 @@ def set_auto_start_enabled(enabled: bool) -> None:
     config = load_config()
     config['auto_start_enabled'] = enabled
     save_config(config)
+
+
+def get_shortcut() -> dict:
+    """Get the configured shortcut."""
+    config = load_config()
+    return config.get('shortcut', get_default_shortcut())
+
+
+def set_shortcut(modifiers: list, key: str) -> None:
+    """Set the shortcut in configuration."""
+    config = load_config()
+    config['shortcut'] = {
+        'modifiers': modifiers,
+        'key': key
+    }
+    save_config(config)
+
+
+def shortcut_to_string(shortcut: dict) -> str:
+    """Convert shortcut dict to display string."""
+    parts = [mod.capitalize() for mod in shortcut.get('modifiers', [])]
+    key = shortcut.get('key', '').upper()
+    if key:
+        parts.append(key)
+    return '+'.join(parts)

@@ -19,9 +19,11 @@ from clipboard_monitor import ClipboardMonitor
 from image_handler import handle_clipboard_image
 from config import (
     load_config, get_save_folder, set_save_folder,
-    is_auto_start_enabled, set_auto_start_enabled
+    is_auto_start_enabled, set_auto_start_enabled,
+    get_shortcut, shortcut_to_string
 )
 from autostart import enable_auto_start, disable_auto_start, is_auto_start_registered
+from shortcut_dialog import show_shortcut_dialog
 
 
 class ClipboardImageViewer:
@@ -69,6 +71,25 @@ class ClipboardImageViewer:
         folder = get_save_folder()
         os.startfile(str(folder))
 
+    def change_shortcut(self, icon=None, item=None):
+        """Open dialog to change the keyboard shortcut."""
+        def on_shortcut_changed():
+            # Reload shortcut in the monitor
+            if self.monitor:
+                self.monitor.reload_shortcut()
+            # Update menu to show new shortcut
+            self.update_menu()
+            print(f"Shortcut changed to: {shortcut_to_string(get_shortcut())}")
+
+        # Run in a thread to avoid blocking
+        thread = threading.Thread(target=lambda: show_shortcut_dialog(on_shortcut_changed))
+        thread.start()
+
+    def get_shortcut_text(self):
+        """Get the text for the shortcut menu item."""
+        shortcut = get_shortcut()
+        return f"Shortcut: {shortcut_to_string(shortcut)}"
+
     def toggle_auto_start(self, icon=None, item=None):
         """Toggle Windows auto-start."""
         if is_auto_start_registered():
@@ -97,6 +118,8 @@ class ClipboardImageViewer:
     def create_menu(self):
         """Create the system tray menu."""
         return pystray.Menu(
+            pystray.MenuItem(self.get_shortcut_text(), self.change_shortcut),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem("Change Save Folder", self.change_save_folder),
             pystray.MenuItem("Open Save Folder", self.open_save_folder),
             pystray.Menu.SEPARATOR,
@@ -228,7 +251,8 @@ class ClipboardImageViewer:
         )
 
         print("System tray icon created - right-click to access menu")
-        print("Press Ctrl+V with an image in clipboard to save and view it")
+        shortcut_str = shortcut_to_string(get_shortcut())
+        print(f"Press {shortcut_str} with an image in clipboard to save and view it")
 
         # This blocks until the icon is stopped
         self.tray_icon.run()
